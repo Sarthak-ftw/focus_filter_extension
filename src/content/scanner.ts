@@ -1,20 +1,28 @@
 import { FilterEngine } from '../filtering/engine';
 import { YOUTUBE_SELECTORS } from './selectors';
+import { ThumbnailScanner } from './thumbnail-scanner';
 
 const PROCESSED_ATTR = 'data-focus-filter-processed';
 const HIDDEN_ATTR = 'data-focus-filter-hidden';
 
 export class YouTubeScanner {
   private engine: FilterEngine;
+  private thumbnailScanner?: ThumbnailScanner;
   private onCountIncrement?: (count: number) => void;
   private sessionHiddenCount: number = 0;
 
   constructor(
     engine: FilterEngine,
+    thumbnailScanner?: ThumbnailScanner,
     onCountIncrement?: (count: number) => void
   ) {
     this.engine = engine;
+    this.thumbnailScanner = thumbnailScanner;
     this.onCountIncrement = onCountIncrement;
+  }
+
+  public setThumbnailScanner(scanner: ThumbnailScanner): void {
+    this.thumbnailScanner = scanner;
   }
 
   /**
@@ -25,18 +33,29 @@ export class YouTubeScanner {
 
     // 1. Scan individual video cards
     const cards = root.querySelectorAll<HTMLElement>(YOUTUBE_SELECTORS.cards);
+    const visibleCards: HTMLElement[] = [];
 
     cards.forEach((card) => {
       // Skip if already processed and rules haven't changed
       if (card.hasAttribute(PROCESSED_ATTR)) {
+        if (!card.hasAttribute(HIDDEN_ATTR)) {
+          visibleCards.push(card);
+        }
         return;
       }
 
       const isHidden = this.processCard(card);
       if (isHidden) {
         newlyHidden++;
+      } else {
+        visibleCards.push(card);
       }
     });
+
+    // Pass visible cards to the thumbnail OCR scanner
+    if (visibleCards.length > 0 && this.thumbnailScanner) {
+      this.thumbnailScanner.observeCards(visibleCards);
+    }
 
     // 2. Scan Shorts shelves if applicable
     const shelves = root.querySelectorAll<HTMLElement>(YOUTUBE_SELECTORS.shortsShelves);

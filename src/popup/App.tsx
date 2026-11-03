@@ -10,6 +10,7 @@ import {
   Tv,
   Film,
   RotateCcw,
+  ScanEye,
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
 import { FilterSettings, DEFAULT_SETTINGS } from '../types';
@@ -50,6 +51,13 @@ export const App: React.FC = () => {
 
   const handleToggleShorts = async () => {
     const updated = { ...settings, hideShorts: !settings.hideShorts };
+    setSettings(updated);
+    await StorageService.saveSettings(updated);
+    triggerSaved();
+  };
+
+  const handleToggleThumbnailAI = async () => {
+    const updated = { ...settings, enableThumbnailAI: !settings.enableThumbnailAI };
     setSettings(updated);
     await StorageService.saveSettings(updated);
     triggerSaved();
@@ -220,7 +228,7 @@ export const App: React.FC = () => {
       </div>
 
       {/* Shorts Toggle Quick Option */}
-      <div className="bg-white border border-slate-200/80 rounded-xl px-3 py-2.5 shadow-xs mb-3 flex items-center justify-between">
+      <div className="bg-white border border-slate-200/80 rounded-xl px-3 py-2.5 shadow-xs mb-2.5 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <Film className="w-4 h-4 text-rose-500" />
           <div>
@@ -237,6 +245,34 @@ export const App: React.FC = () => {
           <span
             className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
               settings.hideShorts ? 'translate-x-4.5' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* AI Thumbnail OCR Toggle */}
+      <div className="bg-white border border-slate-200/80 rounded-xl px-3 py-2.5 shadow-xs mb-3 flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <ScanEye className="w-4 h-4 text-indigo-600" />
+          <div>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold text-slate-800">AI Thumbnail OCR</p>
+              <span className="text-[9px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.2 rounded-full">
+                Tesseract
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400">Reads text embedded inside thumbnails</p>
+          </div>
+        </div>
+        <button
+          onClick={handleToggleThumbnailAI}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+            settings.enableThumbnailAI ? 'bg-indigo-600' : 'bg-slate-300'
+          }`}
+        >
+          <span
+            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+              settings.enableThumbnailAI ? 'translate-x-4.5' : 'translate-x-1'
             }`}
           />
         </button>
@@ -321,7 +357,7 @@ export const App: React.FC = () => {
       {/* Footer Info */}
       <footer className="text-center pt-1 border-t border-slate-200/60">
         <p className="text-[10px] text-slate-400">
-          Focus Filter Level 1 • Live Filtering Active
+          Focus Filter Level 2 • AI OCR & Keyword Filter Active
         </p>
       </footer>
     </div>

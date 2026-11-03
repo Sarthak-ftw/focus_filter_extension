@@ -2,14 +2,16 @@ import { StorageService } from '../services/storage';
 import { FilterEngine } from '../filtering/engine';
 import { YouTubeScanner } from './scanner';
 import { YouTubeObserver } from './observer';
+import { ThumbnailScanner } from './thumbnail-scanner';
 import { FilterSettings } from '../types';
 
 console.log(
-  '%c[Focus Filter] Active on YouTube. Level 1 Filtering Engine ready.',
+  '%c[Focus Filter] Active on YouTube. Level 2 AI Thumbnail & Keyword Filter ready.',
   'background: #4f46e5; color: #ffffff; font-weight: bold; padding: 4px 8px; border-radius: 4px;'
 );
 
 let filterEngine: FilterEngine;
+let thumbnailScanner: ThumbnailScanner;
 let scanner: YouTubeScanner;
 let observer: YouTubeObserver;
 
@@ -25,30 +27,53 @@ async function initializeFocusFilter(): Promise<void> {
     settings.isEnabled
   );
 
-  // 2. Instantiate DOM scanner with count reporter
-  scanner = new YouTubeScanner(filterEngine, async (newCount) => {
-    // Sync hidden count to extension storage
-    const current = await StorageService.getSettings();
-    await StorageService.saveSettings({
-      ...current,
-      stats: {
-        ...current.stats,
-        videosHiddenCount: current.stats.videosHiddenCount + newCount,
-      },
-    });
-  });
+  // 2. Instantiate Thumbnail AI Scanner (OCR)
+  thumbnailScanner = new ThumbnailScanner(
+    filterEngine,
+    settings.enableThumbnailAI && settings.isEnabled,
+    async (newCount) => {
+      const current = await StorageService.getSettings();
+      await StorageService.saveSettings({
+        ...current,
+        stats: {
+          ...current.stats,
+          videosHiddenCount: current.stats.videosHiddenCount + newCount,
+        },
+      });
+    }
+  );
 
-  // 3. Instantiate mutation observer and start watching DOM
+  // 3. Instantiate DOM scanner with count reporter and thumbnail scanner
+  scanner = new YouTubeScanner(
+    filterEngine,
+    thumbnailScanner,
+    async (newCount) => {
+      const current = await StorageService.getSettings();
+      await StorageService.saveSettings({
+        ...current,
+        stats: {
+          ...current.stats,
+          videosHiddenCount: current.stats.videosHiddenCount + newCount,
+        },
+      });
+    }
+  );
+
+  // 4. Instantiate mutation observer and start watching DOM
   observer = new YouTubeObserver(scanner);
   observer.start();
 
-  // 4. Reactively update rules when user edits settings in the popup
+  // 5. Reactively update rules when user edits settings in the popup
   StorageService.onSettingsChange((updatedSettings: FilterSettings) => {
     filterEngine.updateRules(
       updatedSettings.keywords,
       updatedSettings.channels,
       updatedSettings.hideShorts,
       updatedSettings.isEnabled
+    );
+
+    thumbnailScanner.setEnabled(
+      updatedSettings.enableThumbnailAI && updatedSettings.isEnabled
     );
 
     // Re-evaluate current DOM cards instantly without requiring page reload
