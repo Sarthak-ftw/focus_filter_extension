@@ -26,26 +26,29 @@ function escapeRegExp(string: string): string {
 }
 
 /**
- * Pure Keyword and Channel Matching Engine.
- * Does not touch the DOM, making it 100% testable in unit tests or node environments.
+ * Pure Keyword, Channel, and Allowlist Matching Engine.
  */
 export class FilterEngine {
   private keywords: string[] = [];
   private channels: string[] = [];
+  private allowlist: string[] = [];
   private hideShorts: boolean = false;
   private isEnabled: boolean = true;
 
   // Precompiled regexes for optimal O(1) matching during high-frequency scrolls
   private compiledKeywordRegexes: { raw: string; regex: RegExp }[] = [];
+  private compiledAllowlistRegexes: { raw: string; regex: RegExp }[] = [];
   private normalizedChannels: Set<string> = new Set();
+  private normalizedAllowlist: Set<string> = new Set();
 
   constructor(
     keywords: string[] = [],
     channels: string[] = [],
+    allowlist: string[] = [],
     hideShorts: boolean = false,
     isEnabled: boolean = true
   ) {
-    this.updateRules(keywords, channels, hideShorts, isEnabled);
+    this.updateRules(keywords, channels, allowlist, hideShorts, isEnabled);
   }
 
   /**
@@ -54,6 +57,7 @@ export class FilterEngine {
   public updateRules(
     keywords: string[],
     channels: string[],
+    allowlist: string[],
     hideShorts: boolean,
     isEnabled: boolean
   ): void {
@@ -61,22 +65,23 @@ export class FilterEngine {
     this.hideShorts = hideShorts;
     this.keywords = keywords.map(normalizeText).filter(Boolean);
     this.channels = channels.map(normalizeText).filter(Boolean);
+    this.allowlist = allowlist.map(normalizeText).filter(Boolean);
 
     this.normalizedChannels = new Set(this.channels);
+    this.normalizedAllowlist = new Set(this.allowlist);
 
-    // Compile regexes using word boundary check when possible, or substring boundary
+    // Compile blocked keywords
     this.compiledKeywordRegexes = this.keywords.map((kw) => {
       const escaped = escapeRegExp(kw);
-      // If keyword consists solely of word characters, check word boundaries \b
-      // Otherwise fallback to escaped substring search
-      const pattern = /^\w+$/.test(kw)
-        ? `\\b${escaped}\\b`
-        : escaped;
+      const pattern = /^\w+$/.test(kw) ? `\\b${escaped}\\b` : escaped;
+      return { raw: kw, regex: new RegExp(pattern, 'i') };
+    });
 
-      return {
-        raw: kw,
-        regex: new RegExp(pattern, 'i'),
-      };
+    // Compile allowlisted keywords
+    this.compiledAllowlistRegexes = this.allowlist.map((kw) => {
+      const escaped = escapeRegExp(kw);
+      const pattern = /^\w+$/.test(kw) ? `\\b${escaped}\\b` : escaped;
+      return { raw: kw, regex: new RegExp(pattern, 'i') };
     });
   }
 
@@ -93,6 +98,22 @@ export class FilterEngine {
       return { shouldHide: false };
     }
 
+    const normTitle = normalizeText(title);
+    const normChannel = normalizeText(channel);
+
+    // 0. PRIORITY CHECK: Allowlist takes precedence over all blocked rules
+    if (normChannel && this.normalizedAllowlist.has(normChannel)) {
+      return { shouldHide: false };
+    }
+
+    if (normTitle && this.compiledAllowlistRegexes.length > 0) {
+      for (const { regex } of this.compiledAllowlistRegexes) {
+        if (regex.test(normTitle)) {
+          return { shouldHide: false };
+        }
+      }
+    }
+
     // 1. Check Shorts toggle
     if (this.hideShorts && isShort) {
       return {
@@ -101,9 +122,6 @@ export class FilterEngine {
         matchedType: 'shorts',
       };
     }
-
-    const normTitle = normalizeText(title);
-    const normChannel = normalizeText(channel);
 
     // 2. Check Channel match
     if (normChannel && this.normalizedChannels.size > 0) {

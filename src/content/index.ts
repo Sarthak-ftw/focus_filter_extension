@@ -19,10 +19,11 @@ let observer: YouTubeObserver;
 async function initializeFocusFilter(): Promise<void> {
   const settings = await StorageService.getSettings();
 
-  // 1. Instantiate pure filtering engine
+  // 1. Instantiate pure filtering engine with allowlist
   filterEngine = new FilterEngine(
     settings.keywords,
     settings.channels,
+    settings.allowlist || [],
     settings.hideShorts,
     settings.isEnabled
   );
@@ -43,10 +44,11 @@ async function initializeFocusFilter(): Promise<void> {
     }
   );
 
-  // 3. Instantiate DOM scanner with count reporter and thumbnail scanner
+  // 3. Instantiate DOM scanner with count reporter, thumbnail scanner, and filter style
   scanner = new YouTubeScanner(
     filterEngine,
     thumbnailScanner,
+    settings.filterStyle || 'blur',
     async (newCount) => {
       const current = await StorageService.getSettings();
       await StorageService.saveSettings({
@@ -68,9 +70,12 @@ async function initializeFocusFilter(): Promise<void> {
     filterEngine.updateRules(
       updatedSettings.keywords,
       updatedSettings.channels,
+      updatedSettings.allowlist || [],
       updatedSettings.hideShorts,
       updatedSettings.isEnabled
     );
+
+    scanner.setFilterStyle(updatedSettings.filterStyle || 'blur');
 
     thumbnailScanner.setEnabled(
       updatedSettings.enableThumbnailAI && updatedSettings.isEnabled
