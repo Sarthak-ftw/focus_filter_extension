@@ -1,7 +1,6 @@
 /**
  * Centralized YouTube DOM Selectors Dictionary.
- * Isolating selectors guarantees that any future changes to YouTube's markup
- * require editing only this single configuration file.
+ * Covers both classic Polymer elements and modern lockup view models.
  */
 
 export const YOUTUBE_SELECTORS = {
@@ -12,6 +11,7 @@ export const YOUTUBE_SELECTORS = {
     'ytd-compact-video-renderer',   // Watch page "Up Next" / Suggested sidebar cards
     'ytd-reel-item-renderer',       // Individual Shorts cards
     'ytd-grid-video-renderer',      // Channel videos tab grid cards
+    'yt-lockup-view-model',          // Modern YouTube lockup component
   ].join(','),
 
   // Shorts containers and shelves
@@ -28,6 +28,9 @@ export const YOUTUBE_SELECTORS = {
     'span#video-title',
     'a#video-title',
     'h3.title-and-badge',
+    'h3 a',
+    'h3',
+    '.yt-lockup-metadata-view-model-wiz__title',
   ].join(','),
 
   // Channel name elements inside a video card
@@ -36,5 +39,10 @@ export const YOUTUBE_SELECTORS = {
     '#channel-name #text',
     '.ytd-channel-name a',
     'yt-formatted-string.ytd-channel-name',
+    'ytd-channel-name',
+    '#channel-name',
+    '.yt-lockup-metadata-view-model-wiz__metadata',
+    'a[href^="/@"]',
+    'a[href*="/channel/"]',
   ].join(','),
 };

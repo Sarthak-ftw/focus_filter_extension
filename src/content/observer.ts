@@ -16,10 +16,15 @@ export class YouTubeObserver {
   public start(): void {
     if (this.isObserving) return;
 
-    // 1. Initial scan of the current page
+    // 1. Initial scan
     this.scanner.scan();
 
-    // 2. Setup MutationObserver for dynamically loaded video cards
+    // 2. Hydration passes: Catch elements after YouTube client-side hydration
+    window.setTimeout(() => this.scanner.scan(), 300);
+    window.setTimeout(() => this.scanner.scan(), 1000);
+    window.setTimeout(() => this.scanner.scan(), 2500);
+
+    // 3. Setup MutationObserver for dynamically loaded video cards
     this.observer = new MutationObserver((mutations) => {
       this.handleMutations(mutations);
     });
@@ -31,7 +36,7 @@ export class YouTubeObserver {
       subtree: true,
     });
 
-    // 3. Listen for YouTube SPA client-side page transitions
+    // 4. Listen for YouTube SPA client-side page transitions
     window.addEventListener('yt-navigate-finish', this.handlePageNavigation);
     window.addEventListener('yt-page-data-updated', this.handlePageNavigation);
 
@@ -60,7 +65,6 @@ export class YouTubeObserver {
 
   /**
    * Batches DOM mutations using a 60ms debounce window.
-   * Prevents layout thrashing and UI jank during rapid scrolling.
    */
   private handleMutations(_mutations: MutationRecord[]): void {
     if (this.debounceTimer !== null) {
@@ -77,9 +81,7 @@ export class YouTubeObserver {
    * Triggered when YouTube completes an internal SPA route transition.
    */
   private handlePageNavigation = (): void => {
-    // Delay slightly to let YouTube mount the new view's primary container
-    window.setTimeout(() => {
-      this.scanner.scan();
-    }, 200);
+    window.setTimeout(() => this.scanner.scan(), 200);
+    window.setTimeout(() => this.scanner.scan(), 800);
   };
 }

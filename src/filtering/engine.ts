@@ -6,7 +6,7 @@ export interface FilterMatchResult {
 
 /**
  * Normalizes input strings by:
- * 1. Converting to Unicode Normalization Form KC (handles full-width chars & accents)
+ * 1. Converting to Unicode Normalization Form KC
  * 2. Lowercasing
  * 3. Stripping redundant surrounding whitespaces
  */
@@ -26,6 +26,26 @@ function escapeRegExp(string: string): string {
 }
 
 /**
+ * Compiles a keyword into a robust regex:
+ * - Word boundary at start (\b)
+ * - Allows common plural/suffix variations (s, es, ed, ing, d)
+ * - If keyword contains spaces or symbols, uses exact escaped match
+ */
+function compileKeywordPattern(keyword: string): RegExp {
+  const escaped = escapeRegExp(keyword);
+
+  // If keyword is a single word (e.g. "perfume", "fragrance", "game")
+  if (/^\w+$/.test(keyword)) {
+    // Matches "perfume", "perfumes", "perfumed", "perfumery"
+    // Also matches "fragrance", "fragrances"
+    return new RegExp(`\\b${escaped}(?:s|es|d|ed|ing|ry|r)?\\b|${escaped}`, 'i');
+  }
+
+  // Multi-word phrase (e.g. "dior sauvage", "best perfumes")
+  return new RegExp(escaped, 'i');
+}
+
+/**
  * Pure Keyword, Channel, and Allowlist Matching Engine.
  */
 export class FilterEngine {
@@ -35,7 +55,6 @@ export class FilterEngine {
   private hideShorts: boolean = false;
   private isEnabled: boolean = true;
 
-  // Precompiled regexes for optimal O(1) matching during high-frequency scrolls
   private compiledKeywordRegexes: { raw: string; regex: RegExp }[] = [];
   private compiledAllowlistRegexes: { raw: string; regex: RegExp }[] = [];
   private normalizedChannels: Set<string> = new Set();
@@ -51,9 +70,6 @@ export class FilterEngine {
     this.updateRules(keywords, channels, allowlist, hideShorts, isEnabled);
   }
 
-  /**
-   * Updates internal rules and pre-compiles regex patterns for performance.
-   */
   public updateRules(
     keywords: string[],
     channels: string[],
@@ -70,30 +86,23 @@ export class FilterEngine {
     this.normalizedChannels = new Set(this.channels);
     this.normalizedAllowlist = new Set(this.allowlist);
 
-    // Compile blocked keywords
-    this.compiledKeywordRegexes = this.keywords.map((kw) => {
-      const escaped = escapeRegExp(kw);
-      const pattern = /^\w+$/.test(kw) ? `\\b${escaped}\\b` : escaped;
-      return { raw: kw, regex: new RegExp(pattern, 'i') };
-    });
+    // Compile regexes with flexible plural/suffix support
+    this.compiledKeywordRegexes = this.keywords.map((kw) => ({
+      raw: kw,
+      regex: compileKeywordPattern(kw),
+    }));
 
-    // Compile allowlisted keywords
-    this.compiledAllowlistRegexes = this.allowlist.map((kw) => {
-      const escaped = escapeRegExp(kw);
-      const pattern = /^\w+$/.test(kw) ? `\\b${escaped}\\b` : escaped;
-      return { raw: kw, regex: new RegExp(pattern, 'i') };
-    });
+    this.compiledAllowlistRegexes = this.allowlist.map((kw) => ({
+      raw: kw,
+      regex: compileKeywordPattern(kw),
+    }));
   }
 
-  /**
-   * Evaluates video card metadata against blocked rules.
-   */
   public evaluate(
     title: string,
     channel: string = '',
     isShort: boolean = false
   ): FilterMatchResult {
-    // If master shield is OFF, never hide anything
     if (!this.isEnabled) {
       return { shouldHide: false };
     }
@@ -101,7 +110,7 @@ export class FilterEngine {
     const normTitle = normalizeText(title);
     const normChannel = normalizeText(channel);
 
-    // 0. PRIORITY CHECK: Allowlist takes precedence over all blocked rules
+    // 0. Priority: Allowlist Check
     if (normChannel && this.normalizedAllowlist.has(normChannel)) {
       return { shouldHide: false };
     }
@@ -114,7 +123,7 @@ export class FilterEngine {
       }
     }
 
-    // 1. Check Shorts toggle
+    // 1. Shorts Filter
     if (this.hideShorts && isShort) {
       return {
         shouldHide: true,
@@ -123,7 +132,7 @@ export class FilterEngine {
       };
     }
 
-    // 2. Check Channel match
+    // 2. Blocked Channels Check
     if (normChannel && this.normalizedChannels.size > 0) {
       if (this.normalizedChannels.has(normChannel)) {
         return {
@@ -134,10 +143,10 @@ export class FilterEngine {
       }
     }
 
-    // 3. Check Keyword match against title
+    // 3. Blocked Keywords Check against Title
     if (normTitle && this.compiledKeywordRegexes.length > 0) {
       for (const { raw, regex } of this.compiledKeywordRegexes) {
-        if (regex.test(normTitle)) {
+        if (regex.test(normTitle) || normTitle.includes(raw)) {
           return {
             shouldHide: true,
             matchedKeyword: raw,
@@ -147,10 +156,10 @@ export class FilterEngine {
       }
     }
 
-    // 4. Check Keyword match against channel name
+    // 4. Blocked Keywords Check against Channel
     if (normChannel && this.compiledKeywordRegexes.length > 0) {
       for (const { raw, regex } of this.compiledKeywordRegexes) {
-        if (regex.test(normChannel)) {
+        if (regex.test(normChannel) || normChannel.includes(raw)) {
           return {
             shouldHide: true,
             matchedKeyword: raw,
