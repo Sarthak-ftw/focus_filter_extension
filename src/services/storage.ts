@@ -3,22 +3,39 @@ import { FilterSettings, DEFAULT_SETTINGS } from '../types';
 const STORAGE_KEY = 'focus_filter_settings';
 
 /**
- * Storage Service: Abstracts chrome.storage.local with type-safe methods.
- * Provides fallback to window.localStorage when testing directly in a web browser.
+ * Deep-merges stored data with defaults so that:
+ * - New default fields are always present
+ * - User arrays (keywords, channels, allowlist) are taken as-is from storage
+ * - Nested objects (stats, focusSession) are properly merged
  */
+function mergeWithDefaults(stored: Partial<FilterSettings>): FilterSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    // Explicitly preserve user-modified arrays — shallow spread would already do this,
+    // but being explicit prevents accidental reset if schema grows.
+    keywords: Array.isArray(stored.keywords) ? stored.keywords : DEFAULT_SETTINGS.keywords,
+    channels: Array.isArray(stored.channels) ? stored.channels : DEFAULT_SETTINGS.channels,
+    allowlist: Array.isArray(stored.allowlist) ? stored.allowlist : DEFAULT_SETTINGS.allowlist,
+    stats: {
+      ...DEFAULT_SETTINGS.stats,
+      ...(stored.stats || {}),
+    },
+    focusSession: {
+      ...DEFAULT_SETTINGS.focusSession,
+      ...(stored.focusSession || {}),
+    },
+  };
+}
+
 export const StorageService = {
-  /**
-   * Retrieves user filter settings from chrome.storage.local.
-   * If no settings exist yet, saves and returns DEFAULT_SETTINGS.
-   */
   async getSettings(): Promise<FilterSettings> {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       return new Promise((resolve) => {
         chrome.storage.local.get([STORAGE_KEY], (result) => {
           if (result && result[STORAGE_KEY]) {
-            resolve({ ...DEFAULT_SETTINGS, ...result[STORAGE_KEY] });
+            resolve(mergeWithDefaults(result[STORAGE_KEY]));
           } else {
-            // First time launch: initialize storage with defaults
             chrome.storage.local.set({ [STORAGE_KEY]: DEFAULT_SETTINGS }, () => {
               resolve(DEFAULT_SETTINGS);
             });
@@ -27,11 +44,10 @@ export const StorageService = {
       });
     }
 
-    // Fallback for standalone browser testing / Vite preview
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(local) };
+        return mergeWithDefaults(JSON.parse(local));
       } catch {
         return DEFAULT_SETTINGS;
       }
@@ -40,9 +56,6 @@ export const StorageService = {
     return DEFAULT_SETTINGS;
   },
 
-  /**
-   * Updates settings in chrome.storage.local.
-   */
   async saveSettings(settings: FilterSettings): Promise<void> {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       return new Promise((resolve) => {
@@ -51,13 +64,9 @@ export const StorageService = {
         });
       });
     }
-
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   },
 
-  /**
-   * Listens for changes to storage. Useful for content scripts and popups.
-   */
   onSettingsChange(callback: (newSettings: FilterSettings) => void): () => void {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
       const listener = (
@@ -65,7 +74,7 @@ export const StorageService = {
         areaName: string
       ) => {
         if (areaName === 'local' && changes[STORAGE_KEY]) {
-          callback({ ...DEFAULT_SETTINGS, ...changes[STORAGE_KEY].newValue });
+          callback(mergeWithDefaults(changes[STORAGE_KEY].newValue));
         }
       };
 
@@ -73,7 +82,6 @@ export const StorageService = {
       return () => chrome.storage.onChanged.removeListener(listener);
     }
 
-    // No-op for non-extension environment
     return () => {};
   },
 };

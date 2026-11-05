@@ -15,7 +15,6 @@ export class YouTubeScanner {
   private thumbnailScanner?: ThumbnailScanner;
   private filterStyle: FilterStyle = 'blur';
   private onCountIncrement?: (count: number) => void;
-  private sessionHiddenCount: number = 0;
 
   constructor(
     engine: FilterEngine,
@@ -118,9 +117,9 @@ export class YouTubeScanner {
       }
     });
 
+    // Report only the *newly* hidden count this scan call, not the cumulative total.
     if (newlyHidden > 0 && this.onCountIncrement) {
-      this.sessionHiddenCount += newlyHidden;
-      this.onCountIncrement(this.sessionHiddenCount);
+      this.onCountIncrement(newlyHidden);
     }
 
     return newlyHidden;
@@ -311,8 +310,7 @@ export class YouTubeScanner {
     });
 
     if (newlyHidden > 0 && this.onCountIncrement) {
-      this.sessionHiddenCount += newlyHidden;
-      this.onCountIncrement(this.sessionHiddenCount);
+      this.onCountIncrement(newlyHidden);
     }
   }
 
