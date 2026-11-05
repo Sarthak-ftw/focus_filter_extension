@@ -15,24 +15,14 @@ let thumbnailScanner: ThumbnailScanner;
 let scanner: YouTubeScanner;
 let observer: YouTubeObserver;
 
-// In-memory counter: tracks how many videos have been hidden this page session.
-// Writing to storage happens only when this counter actually changes (not on every scan tick).
 let localHiddenCount = 0;
 let pendingStorageWrite: ReturnType<typeof setTimeout> | null = null;
 
-/**
- * Debounced storage writer: batches rapid increments into a single storage write
- * every 1500ms. This eliminates the runaway counter loop where writing stats
- * triggered onSettingsChange → reEvaluateAll → more increments → more writes.
- */
-function reportHidden(newlyHiddenThisCall: number): void {
-  if (newlyHiddenThisCall <= 0) return;
+function reportHidden(newlyHidden: number): void {
+  if (newlyHidden <= 0) return;
+  localHiddenCount += newlyHidden;
 
-  localHiddenCount += newlyHiddenThisCall;
-
-  if (pendingStorageWrite) {
-    clearTimeout(pendingStorageWrite);
-  }
+  if (pendingStorageWrite) clearTimeout(pendingStorageWrite);
 
   pendingStorageWrite = setTimeout(async () => {
     pendingStorageWrite = null;
@@ -48,8 +38,8 @@ function reportHidden(newlyHiddenThisCall: number): void {
           videosHiddenCount: current.stats.videosHiddenCount + snapshot,
         },
       });
-    } catch (err) {
-      console.warn('[Focus Filter] Failed to persist hidden count:', err);
+    } catch {
+      // Non-critical — stats write failed
     }
   }, 1500);
 }
@@ -57,7 +47,6 @@ function reportHidden(newlyHiddenThisCall: number): void {
 async function initializeFocusFilter(): Promise<void> {
   const settings = await StorageService.getSettings();
 
-  // 1. Pure filtering engine with allowlist
   filterEngine = new FilterEngine(
     settings.keywords,
     settings.channels,
@@ -66,14 +55,13 @@ async function initializeFocusFilter(): Promise<void> {
     settings.isEnabled
   );
 
-  // 2. Thumbnail OCR scanner
   thumbnailScanner = new ThumbnailScanner(
     filterEngine,
     settings.enableThumbnailAI && settings.isEnabled,
     reportHidden
   );
+  thumbnailScanner.setFilterStyle(settings.filterStyle || 'blur');
 
-  // 3. DOM scanner — passes only *new* hidden counts (not cumulative session total)
   scanner = new YouTubeScanner(
     filterEngine,
     thumbnailScanner,
@@ -81,47 +69,34 @@ async function initializeFocusFilter(): Promise<void> {
     reportHidden
   );
 
-  // 4. Mutation observer
   observer = new YouTubeObserver(scanner);
   observer.start();
 
-  // 5. React to popup settings changes
-  // IMPORTANT: We guard against infinite loops here.
-  // onSettingsChange fires when stats.videosHiddenCount changes too (from reportHidden).
-  // We only call reEvaluateAll when non-stats fields actually changed.
-  let lastKnownRuleHash = getRuleHash(settings);
+  let lastRuleHash = getRuleHash(settings);
 
-  StorageService.onSettingsChange((updatedSettings: FilterSettings) => {
-    const newHash = getRuleHash(updatedSettings);
+  StorageService.onSettingsChange((updated: FilterSettings) => {
+    const newHash = getRuleHash(updated);
 
-    // Always keep engine rules in sync
     filterEngine.updateRules(
-      updatedSettings.keywords,
-      updatedSettings.channels,
-      updatedSettings.allowlist || [],
-      updatedSettings.hideShorts,
-      updatedSettings.isEnabled
+      updated.keywords,
+      updated.channels,
+      updated.allowlist || [],
+      updated.hideShorts,
+      updated.isEnabled
     );
 
-    scanner.setFilterStyle(updatedSettings.filterStyle || 'blur');
+    const style = updated.filterStyle || 'blur';
+    scanner.setFilterStyle(style);
+    thumbnailScanner.setEnabled(updated.enableThumbnailAI && updated.isEnabled);
+    thumbnailScanner.setFilterStyle(style);
 
-    thumbnailScanner.setEnabled(
-      updatedSettings.enableThumbnailAI && updatedSettings.isEnabled
-    );
-
-    // Only re-scan the DOM if the actual filter rules changed.
-    // This prevents the stats counter write from triggering a full DOM re-scan.
-    if (newHash !== lastKnownRuleHash) {
-      lastKnownRuleHash = newHash;
+    if (newHash !== lastRuleHash) {
+      lastRuleHash = newHash;
       scanner.reEvaluateAll();
     }
   });
 }
 
-/**
- * Creates a lightweight hash string from the filter-relevant parts of settings.
- * Stats and focusSession are excluded so their updates don't trigger DOM re-scans.
- */
 function getRuleHash(s: FilterSettings): string {
   return JSON.stringify({
     isEnabled: s.isEnabled,
