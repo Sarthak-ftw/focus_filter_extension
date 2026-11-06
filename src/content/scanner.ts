@@ -72,6 +72,8 @@ export class YouTubeScanner {
 
   /**
    * Scans the document or root container for video cards.
+   * Only processes cards that have NOT been processed yet.
+   * This is the main hot path called by the MutationObserver.
    */
   public scan(root: ParentNode = document): number {
     this.ensureInjectedStyles();
@@ -81,7 +83,7 @@ export class YouTubeScanner {
     const visibleCards: HTMLElement[] = [];
 
     cards.forEach((card) => {
-      // If already processed and not hidden, keep track for thumbnail scanner
+      // Skip already-processed cards entirely — they will not be re-counted
       if (card.hasAttribute(PROCESSED_ATTR)) {
         if (!card.hasAttribute(HIDDEN_ATTR) && !card.hasAttribute(BLURRED_ATTR)) {
           visibleCards.push(card);
@@ -126,11 +128,13 @@ export class YouTubeScanner {
   }
 
   /**
-   * Evaluates a single video card.
+   * Evaluates a single video card. Marks it as processed when done.
+   * Returns true if the card should be hidden/blurred.
    */
   private processCard(card: HTMLElement): boolean {
     // If the user intentionally revealed this card during this session, leave it alone
     if (card.hasAttribute(REVEALED_ATTR)) {
+      card.setAttribute(PROCESSED_ATTR, 'true');
       return false;
     }
 
@@ -148,57 +152,42 @@ export class YouTubeScanner {
       card.tagName.toLowerCase() === 'ytd-reel-item-renderer' ||
       !!card.querySelector('a[href*="/shorts/"]');
 
-    const result = this.engine.evaluate(title, channel, isShort);
+    const evalResult = this.engine.evaluate(title, channel, isShort);
 
-    // Now that title/channel data was present, stamp as processed
+    // Mark as processed BEFORE applying visual changes to prevent double-processing
     card.setAttribute(PROCESSED_ATTR, 'true');
 
-    if (result.shouldHide) {
-      console.log(
-        `%c[Focus Filter] Suppressed: "${title}" | Reason: ${result.matchedType} matched "${result.matchedKeyword}"`,
-        'background: #4f46e5; color: #ffffff; padding: 2px 6px; border-radius: 4px; font-weight: bold;'
-      );
-
-      card.setAttribute(
-        'data-focus-filter-reason',
-        `${result.matchedType}: ${result.matchedKeyword}`
-      );
-
-      if (this.filterStyle === 'hide') {
-        this.removeRevealOverlay(card);
-        card.removeAttribute(BLURRED_ATTR);
-        card.setAttribute(HIDDEN_ATTR, 'true');
-        card.style.setProperty('display', 'none', 'important');
-      } else {
-        // Blur style with reveal overlay
-        card.removeAttribute(HIDDEN_ATTR);
-        card.style.removeProperty('display');
-        card.setAttribute(BLURRED_ATTR, 'true');
-        this.attachRevealOverlay(card, result.matchedKeyword || 'Distraction');
-      }
-
+    if (evalResult.shouldHide) {
+      this.applyFilter(card);
       return true;
     } else {
-      // If rules changed and card no longer matches, restore it
-      if (card.hasAttribute(HIDDEN_ATTR) || card.hasAttribute(BLURRED_ATTR)) {
-        this.restoreCard(card);
-      }
+      // Ensure previously-filtered cards that are now allowed are shown
+      this.removeFilter(card);
       return false;
     }
   }
 
-  private restoreCard(card: HTMLElement): void {
+  private applyFilter(card: HTMLElement): void {
+    if (this.filterStyle === 'hide') {
+      card.removeAttribute(BLURRED_ATTR);
+      this.removeRevealOverlay(card);
+      card.setAttribute(HIDDEN_ATTR, 'true');
+    } else {
+      // blur mode
+      card.removeAttribute(HIDDEN_ATTR);
+      card.setAttribute(BLURRED_ATTR, 'true');
+      this.ensureRevealOverlay(card);
+    }
+  }
+
+  private removeFilter(card: HTMLElement): void {
     card.removeAttribute(HIDDEN_ATTR);
     card.removeAttribute(BLURRED_ATTR);
-    card.removeAttribute('data-focus-filter-reason');
-    card.style.removeProperty('display');
     this.removeRevealOverlay(card);
   }
 
-  private attachRevealOverlay(card: HTMLElement, keyword: string): void {
+  private ensureRevealOverlay(card: HTMLElement): void {
     if (card.querySelector(`.${OVERLAY_CLASS}`)) return;
-
-    card.style.position = 'relative';
 
     const overlay = document.createElement('div');
     overlay.className = OVERLAY_CLASS;
@@ -209,16 +198,13 @@ export class YouTubeScanner {
       flex-direction: column !important;
       align-items: center !important;
       justify-content: center !important;
-      background: rgba(15, 23, 42, 0.7) !important;
-      backdrop-filter: blur(8px) !important;
-      z-index: 100 !important;
+      z-index: 9999 !important;
       border-radius: 12px !important;
-      padding: 12px !important;
-      cursor: default !important;
     `;
+    card.style.position = 'relative';
 
-    const label = document.createElement('span');
-    label.textContent = `Focus Filter: "${keyword}"`;
+    const label = document.createElement('p');
+    label.textContent = '\u{1F6E1} Focus Filter';
     label.style.cssText = `
       font-size: 11px !important;
       font-weight: 700 !important;
@@ -231,7 +217,7 @@ export class YouTubeScanner {
     `;
 
     const button = document.createElement('button');
-    button.textContent = '👁️ Reveal Video';
+    button.textContent = '\u{1F441} Reveal Video';
     button.style.cssText = `
       font-size: 12px !important;
       font-weight: 700 !important;
@@ -275,8 +261,12 @@ export class YouTubeScanner {
   }
 
   /**
-   * Re-evaluates every card on the page.
-   * Called when settings, keywords, or filters change in the popup.
+   * Re-evaluates every card on the page when settings/keywords change.
+   *
+   * KEY FIX: We reset PROCESSED_ATTR so cards are re-evaluated with new rules,
+   * but we do NOT count already-hidden/blurred cards as "newly hidden" in the stats.
+   * We ONLY count cards that were previously VISIBLE and are now being hidden for
+   * the first time due to the new keyword/channel rule.
    */
   public reEvaluateAll(): void {
     this.ensureInjectedStyles();
@@ -285,9 +275,15 @@ export class YouTubeScanner {
       `[${PROCESSED_ATTR}], ${YOUTUBE_SELECTORS.cards}`
     );
 
-    let newlyHidden = 0;
+    let newlyHiddenByRuleChange = 0;
 
     allCards.forEach((card) => {
+      // Record the PREVIOUS state before we reset anything
+      const wasAlreadyFiltered =
+        card.hasAttribute(HIDDEN_ATTR) || card.hasAttribute(BLURRED_ATTR);
+      const wasRevealed = card.hasAttribute(REVEALED_ATTR);
+
+      // Reset processed so processCard runs a fresh evaluation
       card.removeAttribute(PROCESSED_ATTR);
 
       if (
@@ -304,13 +300,25 @@ export class YouTubeScanner {
           card.style.removeProperty('display');
         }
       } else {
-        const isHidden = this.processCard(card);
-        if (isHidden) newlyHidden++;
+        // If the user intentionally revealed this card, don't re-filter it
+        if (wasRevealed) {
+          card.setAttribute(PROCESSED_ATTR, 'true');
+          return;
+        }
+
+        const isNowFiltered = this.processCard(card);
+
+        // ONLY count toward stats if the card was not already hidden before
+        // This prevents the runaway counter when settings change
+        if (isNowFiltered && !wasAlreadyFiltered) {
+          newlyHiddenByRuleChange++;
+        }
       }
     });
 
-    if (newlyHidden > 0 && this.onCountIncrement) {
-      this.onCountIncrement(newlyHidden);
+    // Only report truly new catches from the rule change
+    if (newlyHiddenByRuleChange > 0 && this.onCountIncrement) {
+      this.onCountIncrement(newlyHiddenByRuleChange);
     }
   }
 

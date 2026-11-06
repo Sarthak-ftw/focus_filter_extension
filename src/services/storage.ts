@@ -8,7 +8,14 @@ const STORAGE_KEY = 'focus_filter_settings';
  * - User arrays (keywords, channels, allowlist) are taken as-is from storage
  * - Nested objects (stats, focusSession) are properly merged
  */
+// Safety cap: if the stored hidden count exceeds this value it was produced
+// by the runaway-counter bug and should be reset to zero automatically.
+const MAX_SANE_HIDDEN_COUNT = 100_000;
+
 function mergeWithDefaults(stored: Partial<FilterSettings>): FilterSettings {
+  const storedStats = stored.stats || { videosHiddenCount: 0, thumbnailsScannedCount: 0, sessionsCompleted: 0 };
+  const rawCount = storedStats.videosHiddenCount ?? 0;
+
   return {
     ...DEFAULT_SETTINGS,
     ...stored,
@@ -19,7 +26,9 @@ function mergeWithDefaults(stored: Partial<FilterSettings>): FilterSettings {
     allowlist: Array.isArray(stored.allowlist) ? stored.allowlist : DEFAULT_SETTINGS.allowlist,
     stats: {
       ...DEFAULT_SETTINGS.stats,
-      ...(stored.stats || {}),
+      ...storedStats,
+      // Auto-heal corrupted runaway counter values from the previous bug
+      videosHiddenCount: rawCount > MAX_SANE_HIDDEN_COUNT ? 0 : rawCount,
     },
     focusSession: {
       ...DEFAULT_SETTINGS.focusSession,
