@@ -5,9 +5,7 @@ export class YouTubeObserver {
   private observer: MutationObserver | null = null;
   private debounceTimer: number | null = null;
   private isObserving: boolean = false;
-
-  // Track whether we have a pending initial hydration scan already scheduled
-  private hydrationDone: boolean = false;
+  private navigationTimers: number[] = [];
 
   constructor(scanner: YouTubeScanner) {
     this.scanner = scanner;
@@ -16,22 +14,17 @@ export class YouTubeObserver {
   public start(): void {
     if (this.isObserving) return;
 
-    // 1. Immediate first scan
+    // 1. Immediate initial scan
     this.scanner.scan();
 
-    // 2. Single deferred hydration pass — catches YouTube's client-side populated titles.
-    //    We only do this once; the MutationObserver handles subsequent dynamic loads.
-    if (!this.hydrationDone) {
-      this.hydrationDone = true;
-      window.setTimeout(() => this.scanner.scan(), 500);
-    }
+    // 2. Initial staggered hydration passes for client-side populated titles
+    this.scheduleStaggeredScans();
 
-    // 3. MutationObserver — only watches childList additions, not attribute changes
-    //    to avoid reacting to our own attribute writes (processed, hidden, blurred).
+    // 3. MutationObserver — observes dynamic DOM insertions (infinite scroll, search results)
     this.observer = new MutationObserver((mutations) => {
-      // Filter to only batches that add new DOM nodes (new video cards loaded)
-      const hasNewNodes = mutations.some((m) => m.addedNodes.length > 0);
-      if (hasNewNodes) {
+      // Trigger scan whenever nodes are added to the DOM
+      const hasAddedNodes = mutations.some((m) => m.addedNodes.length > 0);
+      if (hasAddedNodes) {
         this.scheduleScan();
       }
     });
@@ -42,9 +35,10 @@ export class YouTubeObserver {
       subtree: true,
     });
 
-    // 4. SPA navigation events
+    // 4. SPA navigation events (searching, clicking video, clicking home)
     window.addEventListener('yt-navigate-finish', this.handlePageNavigation);
     window.addEventListener('yt-page-data-updated', this.handlePageNavigation);
+    window.addEventListener('popstate', this.handlePageNavigation);
 
     this.isObserving = true;
   }
@@ -60,8 +54,11 @@ export class YouTubeObserver {
       this.debounceTimer = null;
     }
 
+    this.clearNavigationTimers();
+
     window.removeEventListener('yt-navigate-finish', this.handlePageNavigation);
     window.removeEventListener('yt-page-data-updated', this.handlePageNavigation);
+    window.removeEventListener('popstate', this.handlePageNavigation);
 
     this.isObserving = false;
   }
@@ -83,13 +80,26 @@ export class YouTubeObserver {
   }
 
   /**
-   * SPA page navigation — wait for YouTube to mount the new page content.
+   * Handles SPA page transitions (Home -> Search, Search -> Watch, etc.).
+   * Runs multiple staggered checks to catch elements as they stream from the server.
    */
   private handlePageNavigation = (): void => {
-    this.hydrationDone = false;
-    window.setTimeout(() => {
-      this.scanner.scan();
-      this.hydrationDone = true;
-    }, 400);
+    this.clearNavigationTimers();
+    this.scheduleStaggeredScans();
   };
+
+  private scheduleStaggeredScans(): void {
+    const delays = [200, 600, 1200, 2200];
+    delays.forEach((delay) => {
+      const timer = window.setTimeout(() => {
+        this.scanner.scan();
+      }, delay);
+      this.navigationTimers.push(timer);
+    });
+  }
+
+  private clearNavigationTimers(): void {
+    this.navigationTimers.forEach((t) => window.clearTimeout(t));
+    this.navigationTimers = [];
+  }
 }

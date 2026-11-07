@@ -44,19 +44,33 @@ export class YouTubeScanner {
         display: none !important;
       }
 
-      [${BLURRED_ATTR}="true"] {
+      /* Blur card contents while keeping the reveal overlay crisp & clickable */
+      [${BLURRED_ATTR}="true"] > *:not(.${OVERLAY_CLASS}) {
         filter: blur(14px) grayscale(90%) !important;
-        opacity: 0.35 !important;
+        opacity: 0.3 !important;
         transition: filter 0.25s ease, opacity 0.25s ease !important;
         pointer-events: none !important;
         user-select: none !important;
       }
 
-      [${BLURRED_ATTR}="true"] .${OVERLAY_CLASS} {
+      [${BLURRED_ATTR}="true"] {
+        position: relative !important;
+      }
+
+      .${OVERLAY_CLASS} {
+        position: absolute !important;
+        inset: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        z-index: 9999 !important;
+        background: rgba(15, 23, 42, 0.75) !important;
+        backdrop-filter: blur(8px) !important;
+        border-radius: 12px !important;
+        padding: 12px !important;
         pointer-events: auto !important;
         user-select: auto !important;
-        filter: none !important;
-        opacity: 1 !important;
       }
     `;
     (document.head || document.documentElement).appendChild(styleEl);
@@ -73,7 +87,6 @@ export class YouTubeScanner {
   /**
    * Scans the document or root container for video cards.
    * Only processes cards that have NOT been processed yet.
-   * This is the main hot path called by the MutationObserver.
    */
   public scan(root: ParentNode = document): number {
     this.ensureInjectedStyles();
@@ -83,7 +96,7 @@ export class YouTubeScanner {
     const visibleCards: HTMLElement[] = [];
 
     cards.forEach((card) => {
-      // Skip already-processed cards entirely — they will not be re-counted
+      // Skip already-processed cards entirely to avoid duplicate work and double-counting
       if (card.hasAttribute(PROCESSED_ATTR)) {
         if (!card.hasAttribute(HIDDEN_ATTR) && !card.hasAttribute(BLURRED_ATTR)) {
           visibleCards.push(card);
@@ -99,7 +112,7 @@ export class YouTubeScanner {
       }
     });
 
-    // Pass visible cards to the thumbnail OCR scanner if enabled
+    // Pass visible cards to thumbnail scanner if enabled
     if (visibleCards.length > 0 && this.thumbnailScanner) {
       this.thumbnailScanner.observeCards(visibleCards);
     }
@@ -119,7 +132,6 @@ export class YouTubeScanner {
       }
     });
 
-    // Report only the *newly* hidden count this scan call, not the cumulative total.
     if (newlyHidden > 0 && this.onCountIncrement) {
       this.onCountIncrement(newlyHidden);
     }
@@ -129,7 +141,6 @@ export class YouTubeScanner {
 
   /**
    * Evaluates a single video card. Marks it as processed when done.
-   * Returns true if the card should be hidden/blurred.
    */
   private processCard(card: HTMLElement): boolean {
     // If the user intentionally revealed this card during this session, leave it alone
@@ -141,33 +152,31 @@ export class YouTubeScanner {
     const title = this.extractTitle(card);
     const channel = this.extractChannel(card);
 
-    // CRITICAL: If YouTube has NOT populated the title yet, do NOT mark as processed!
-    // Returning false without PROCESSED_ATTR allows the next mutation tick to scan it
-    // once YouTube hydrates the text into the DOM.
+    // If YouTube has NOT populated the title or channel yet, wait for hydration
     if (!title && !channel) {
       return false;
     }
 
     const isShort =
-      card.tagName.toLowerCase() === 'ytd-reel-item-renderer' ||
+      card.tagName.toLowerCase().includes('reel') ||
+      card.tagName.toLowerCase().includes('shorts') ||
       !!card.querySelector('a[href*="/shorts/"]');
 
     const evalResult = this.engine.evaluate(title, channel, isShort);
 
-    // Mark as processed BEFORE applying visual changes to prevent double-processing
+    // Mark as processed
     card.setAttribute(PROCESSED_ATTR, 'true');
 
     if (evalResult.shouldHide) {
-      this.applyFilter(card);
+      this.applyFilter(card, evalResult.matchedKeyword);
       return true;
     } else {
-      // Ensure previously-filtered cards that are now allowed are shown
       this.removeFilter(card);
       return false;
     }
   }
 
-  private applyFilter(card: HTMLElement): void {
+  private applyFilter(card: HTMLElement, matchedKeyword?: string): void {
     if (this.filterStyle === 'hide') {
       card.removeAttribute(BLURRED_ATTR);
       this.removeRevealOverlay(card);
@@ -176,7 +185,7 @@ export class YouTubeScanner {
       // blur mode
       card.removeAttribute(HIDDEN_ATTR);
       card.setAttribute(BLURRED_ATTR, 'true');
-      this.ensureRevealOverlay(card);
+      this.ensureRevealOverlay(card, matchedKeyword);
     }
   }
 
@@ -186,25 +195,16 @@ export class YouTubeScanner {
     this.removeRevealOverlay(card);
   }
 
-  private ensureRevealOverlay(card: HTMLElement): void {
+  private ensureRevealOverlay(card: HTMLElement, matchedKeyword?: string): void {
     if (card.querySelector(`.${OVERLAY_CLASS}`)) return;
 
     const overlay = document.createElement('div');
     overlay.className = OVERLAY_CLASS;
-    overlay.style.cssText = `
-      position: absolute !important;
-      inset: 0 !important;
-      display: flex !important;
-      flex-direction: column !important;
-      align-items: center !important;
-      justify-content: center !important;
-      z-index: 9999 !important;
-      border-radius: 12px !important;
-    `;
-    card.style.position = 'relative';
 
     const label = document.createElement('p');
-    label.textContent = '\u{1F6E1} Focus Filter';
+    label.textContent = matchedKeyword
+      ? `\u{1F6E1} Focus Filter: "${matchedKeyword}"`
+      : '\u{1F6E1} Focus Filter';
     label.style.cssText = `
       font-size: 11px !important;
       font-weight: 700 !important;
@@ -214,6 +214,11 @@ export class YouTubeScanner {
       border-radius: 6px !important;
       margin-bottom: 8px !important;
       font-family: system-ui, -apple-system, sans-serif !important;
+      text-align: center !important;
+      max-width: 90% !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
     `;
 
     const button = document.createElement('button');
@@ -261,12 +266,7 @@ export class YouTubeScanner {
   }
 
   /**
-   * Re-evaluates every card on the page when settings/keywords change.
-   *
-   * KEY FIX: We reset PROCESSED_ATTR so cards are re-evaluated with new rules,
-   * but we do NOT count already-hidden/blurred cards as "newly hidden" in the stats.
-   * We ONLY count cards that were previously VISIBLE and are now being hidden for
-   * the first time due to the new keyword/channel rule.
+   * Re-evaluates every card on the page when settings change.
    */
   public reEvaluateAll(): void {
     this.ensureInjectedStyles();
@@ -278,12 +278,10 @@ export class YouTubeScanner {
     let newlyHiddenByRuleChange = 0;
 
     allCards.forEach((card) => {
-      // Record the PREVIOUS state before we reset anything
       const wasAlreadyFiltered =
         card.hasAttribute(HIDDEN_ATTR) || card.hasAttribute(BLURRED_ATTR);
       const wasRevealed = card.hasAttribute(REVEALED_ATTR);
 
-      // Reset processed so processCard runs a fresh evaluation
       card.removeAttribute(PROCESSED_ATTR);
 
       if (
@@ -300,7 +298,6 @@ export class YouTubeScanner {
           card.style.removeProperty('display');
         }
       } else {
-        // If the user intentionally revealed this card, don't re-filter it
         if (wasRevealed) {
           card.setAttribute(PROCESSED_ATTR, 'true');
           return;
@@ -308,22 +305,35 @@ export class YouTubeScanner {
 
         const isNowFiltered = this.processCard(card);
 
-        // ONLY count toward stats if the card was not already hidden before
-        // This prevents the runaway counter when settings change
         if (isNowFiltered && !wasAlreadyFiltered) {
           newlyHiddenByRuleChange++;
         }
       }
     });
 
-    // Only report truly new catches from the rule change
     if (newlyHiddenByRuleChange > 0 && this.onCountIncrement) {
       this.onCountIncrement(newlyHiddenByRuleChange);
     }
   }
 
+  /**
+   * Robust multi-tier title extraction pipeline.
+   * Handles Classic Polymer, modern Lit view-models, Search results, and Shorts.
+   */
   private extractTitle(card: HTMLElement): string {
-    // 1. Check title elements directly
+    // 1. Shorts links (search results & shelves often put title on the /shorts/ link)
+    const shortsLink = card.querySelector<HTMLAnchorElement>('a[href*="/shorts/"]');
+    if (shortsLink) {
+      const text = (
+        shortsLink.getAttribute('title') ||
+        shortsLink.getAttribute('aria-label') ||
+        shortsLink.textContent ||
+        ''
+      ).trim();
+      if (text) return text;
+    }
+
+    // 2. Universal title selectors (classic #video-title & modern lockup titles)
     const titleEl = card.querySelector<HTMLElement>(YOUTUBE_SELECTORS.titles);
     if (titleEl) {
       const text = (
@@ -336,7 +346,20 @@ export class YouTubeScanner {
       if (text) return text;
     }
 
-    // 2. Check universal h3 headings
+    // 3. Modern attributed string containers (widely used across 2024-2026 YouTube search)
+    const attributedStr = card.querySelector<HTMLElement>('yt-core-attributed-string');
+    if (attributedStr) {
+      const text = (
+        attributedStr.getAttribute('title') ||
+        attributedStr.getAttribute('aria-label') ||
+        attributedStr.textContent ||
+        attributedStr.innerText ||
+        ''
+      ).trim();
+      if (text) return text;
+    }
+
+    // 4. Check universal h3 headings
     const h3 = card.querySelector<HTMLElement>('h3');
     if (h3) {
       const text = (
@@ -349,14 +372,14 @@ export class YouTubeScanner {
       if (text) return text;
     }
 
-    // 3. Check any watch links inside the card
-    const link = card.querySelector<HTMLAnchorElement>('a[href*="/watch"], a#video-title-link');
-    if (link) {
+    // 5. Check any watch links inside the card
+    const watchLink = card.querySelector<HTMLAnchorElement>('a[href*="/watch"], a#video-title-link');
+    if (watchLink) {
       const text = (
-        link.getAttribute('title') ||
-        link.getAttribute('aria-label') ||
-        link.textContent ||
-        link.innerText ||
+        watchLink.getAttribute('title') ||
+        watchLink.getAttribute('aria-label') ||
+        watchLink.textContent ||
+        watchLink.innerText ||
         ''
       ).trim();
       if (text) return text;
@@ -365,6 +388,9 @@ export class YouTubeScanner {
     return '';
   }
 
+  /**
+   * Extracts channel name across search results, watch next, and homepage cards.
+   */
   private extractChannel(card: HTMLElement): string {
     const channelEl = card.querySelector<HTMLElement>(YOUTUBE_SELECTORS.channels);
     if (channelEl) {
