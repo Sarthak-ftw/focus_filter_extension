@@ -28,22 +28,22 @@ export const YOUTUBE_SELECTORS = {
     'grid-shelf-view-model',               // Modern grid shelf
   ].join(','),
 
-  // Title elements inside a video card
+  // Title elements inside a video card (Never use generic a[href*="/watch"] or un-scoped strings)
   titles: [
     '#video-title',
     '#video-title-link',
     'yt-formatted-string#video-title',
     'span#video-title',
     'a#video-title',
-    'h3.title-and-badge',
+    'h3.title-and-badge a',
+    'h3 a#video-title-link',
     'h3 a',
     'h3',
     '.yt-lockup-metadata-view-model-wiz__title',
     '.yt-lockup-metadata-view-model__title',
-    'yt-core-attributed-string',
-    'span.yt-core-attributed-string',
-    'a[href*="/shorts/"]',
-    'a[href*="/watch"]',
+    '.shortsLockupViewModelHostTitle',
+    '#title-wrapper a',
+    '#title-wrapper',
   ].join(','),
 
   // Channel name elements inside a video card (Home, Search, Watch Next sidebar)

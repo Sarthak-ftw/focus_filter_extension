@@ -338,68 +338,61 @@ export class YouTubeScanner {
 
   /**
    * Robust multi-tier title extraction pipeline.
-   * Handles Classic Polymer, modern Lit view-models, Search results, and Shorts.
+   * Targets the exact title element while strictly ignoring thumbnail overlays/duration badges.
    */
   private extractTitle(card: HTMLElement): string {
-    // 1. Shorts links (search results & shelves often put title on the /shorts/ link)
+    // 1. Primary: Dedicated YouTube #video-title element (Present on standard Search & Home cards)
+    const videoTitleEl = card.querySelector<HTMLElement>(
+      '#video-title, #video-title-link, a#video-title, span#video-title, yt-formatted-string#video-title'
+    );
+    if (videoTitleEl) {
+      const text = (
+        videoTitleEl.getAttribute('title') ||
+        videoTitleEl.getAttribute('aria-label') ||
+        videoTitleEl.textContent ||
+        videoTitleEl.innerText ||
+        ''
+      ).trim();
+      if (text) return text;
+    }
+
+    // 2. Secondary: h3 heading containers (The universal wrapper for YouTube video titles)
+    const h3 = card.querySelector<HTMLElement>('h3');
+    if (h3) {
+      const titleLink = h3.querySelector<HTMLAnchorElement>('a');
+      const text = (
+        titleLink?.getAttribute('title') ||
+        titleLink?.getAttribute('aria-label') ||
+        titleLink?.textContent ||
+        h3.getAttribute('title') ||
+        h3.getAttribute('aria-label') ||
+        h3.textContent ||
+        ''
+      ).trim();
+      if (text) return text;
+    }
+
+    // 3. Modern Lockup title elements (Wiz / Lit components)
+    const lockupTitle = card.querySelector<HTMLElement>(
+      '.yt-lockup-metadata-view-model-wiz__title, .yt-lockup-metadata-view-model__title, .shortsLockupViewModelHostTitle, #title-wrapper'
+    );
+    if (lockupTitle) {
+      const text = (
+        lockupTitle.getAttribute('title') ||
+        lockupTitle.getAttribute('aria-label') ||
+        lockupTitle.textContent ||
+        ''
+      ).trim();
+      if (text) return text;
+    }
+
+    // 4. Shorts links (Shorts cards often store title in title/aria-label on the /shorts/ link)
     const shortsLink = card.querySelector<HTMLAnchorElement>('a[href*="/shorts/"]');
     if (shortsLink) {
       const text = (
         shortsLink.getAttribute('title') ||
         shortsLink.getAttribute('aria-label') ||
         shortsLink.textContent ||
-        ''
-      ).trim();
-      if (text) return text;
-    }
-
-    // 2. Universal title selectors (classic #video-title & modern lockup titles)
-    const titleEl = card.querySelector<HTMLElement>(YOUTUBE_SELECTORS.titles);
-    if (titleEl) {
-      const text = (
-        titleEl.getAttribute('title') ||
-        titleEl.getAttribute('aria-label') ||
-        titleEl.textContent ||
-        titleEl.innerText ||
-        ''
-      ).trim();
-      if (text) return text;
-    }
-
-    // 3. Modern attributed string containers (widely used across 2024-2026 YouTube search & sidebar)
-    const attributedStr = card.querySelector<HTMLElement>('yt-core-attributed-string');
-    if (attributedStr) {
-      const text = (
-        attributedStr.getAttribute('title') ||
-        attributedStr.getAttribute('aria-label') ||
-        attributedStr.textContent ||
-        attributedStr.innerText ||
-        ''
-      ).trim();
-      if (text) return text;
-    }
-
-    // 4. Check universal h3 headings
-    const h3 = card.querySelector<HTMLElement>('h3');
-    if (h3) {
-      const text = (
-        h3.getAttribute('title') ||
-        h3.getAttribute('aria-label') ||
-        h3.textContent ||
-        h3.innerText ||
-        ''
-      ).trim();
-      if (text) return text;
-    }
-
-    // 5. Check any watch links inside the card
-    const watchLink = card.querySelector<HTMLAnchorElement>('a[href*="/watch"], a#video-title-link');
-    if (watchLink) {
-      const text = (
-        watchLink.getAttribute('title') ||
-        watchLink.getAttribute('aria-label') ||
-        watchLink.textContent ||
-        watchLink.innerText ||
         ''
       ).trim();
       if (text) return text;
