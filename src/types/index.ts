@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: FilterSettings = {
   channels: [],
   allowlist: ['mit opencourseware', 'crashcourse', 'khan academy', 'freecodecamp'],
   hideShorts: false,
-  enableThumbnailAI: true,
+  enableThumbnailAI: false, // Default to false so basic keyword filtering runs with zero overhead/stutter
   filterStyle: 'blur', // Defaults to blur with reveal so users can see the feature in action
   focusSession: {
     isActive: false,
@@ -53,7 +53,8 @@ export type MessageType =
   | 'INCREMENT_HIDDEN_COUNT'
   | 'START_FOCUS_SESSION'
   | 'STOP_FOCUS_SESSION'
-  | 'PING';
+  | 'PING'
+  | 'ANALYZE_THUMBNAIL';
 
 export interface ExtensionMessage<T = unknown> {
   type: MessageType;

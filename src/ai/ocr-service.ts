@@ -1,102 +1,92 @@
-import { createWorker, Worker } from 'tesseract.js';
+/**
+ * Thumbnail OCR Service
+ *
+ * In Chrome Extensions (Manifest V3), Content Scripts run in the execution
+ * context of the host webpage (e.g., https://www.youtube.com).
+ * YouTube enforces a strict Content Security Policy (CSP) that explicitly
+ * forbids creating Web Workers via blob URLs (`worker-src blob:`).
+ *
+ * Therefore, heavy inference or worker instantiation MUST NEVER run directly
+ * inside the content script. Instead, this service sends asynchronous messages
+ * to the extension's background service worker / offscreen pipeline via
+ * `chrome.runtime.sendMessage`, completely isolating YouTube's page from CSP
+ * violations.
+ */
 
 class ThumbnailOcrService {
-  private worker: Worker | null = null;
-  private isInitializing: boolean = false;
-  private initPromise: Promise<void> | null = null;
   private cache: Map<string, string> = new Map();
-  private queue: Array<{
-    imageUrl: string;
-    resolve: (text: string) => void;
-    reject: (err: unknown) => void;
-  }> = [];
-  private isProcessingQueue: boolean = false;
-
-  /**
-   * Lazily initializes the Tesseract OCR worker on demand.
-   */
-  private async getWorker(): Promise<Worker> {
-    if (this.worker) return this.worker;
-
-    if (this.isInitializing && this.initPromise) {
-      await this.initPromise;
-      return this.worker!;
-    }
-
-    this.isInitializing = true;
-    this.initPromise = (async () => {
-      try {
-        console.log('[Focus Filter AI] Initializing Tesseract OCR engine...');
-        const worker = await createWorker('eng');
-        this.worker = worker;
-        console.log('[Focus Filter AI] OCR engine ready.');
-      } catch (err) {
-        console.warn('[Focus Filter AI] Failed to initialize worker, fallback to stub:', err);
-        throw err;
-      } finally {
-        this.isInitializing = false;
-      }
-    })();
-
-    await this.initPromise;
-    return this.worker!;
-  }
+  private inFlight: Map<string, Promise<string>> = new Map();
 
   /**
    * Recognizes text from an image URL.
-   * Leverages an in-memory URL cache and a FIFO concurrency queue.
+   * Leverages an in-memory URL cache and deduplicates concurrent in-flight requests.
    */
   public async recognizeText(imageUrl: string): Promise<string> {
     if (!imageUrl) return '';
 
-    // 1. Check cache to avoid duplicate inference
+    // 1. Check in-memory cache to avoid duplicate processing
     if (this.cache.has(imageUrl)) {
       return this.cache.get(imageUrl)!;
     }
 
-    // 2. Queue the request
-    return new Promise<string>((resolve, reject) => {
-      this.queue.push({ imageUrl, resolve, reject });
-      this.processNextInQueue();
-    });
-  }
-
-  private async processNextInQueue(): Promise<void> {
-    if (this.isProcessingQueue || this.queue.length === 0) return;
-
-    this.isProcessingQueue = true;
-    const task = this.queue.shift();
-
-    if (!task) {
-      this.isProcessingQueue = false;
-      return;
+    // 2. Deduplicate identical in-flight requests
+    if (this.inFlight.has(imageUrl)) {
+      return this.inFlight.get(imageUrl)!;
     }
+
+    const requestPromise = this.requestAnalysis(imageUrl);
+    this.inFlight.set(imageUrl, requestPromise);
 
     try {
-      // Check cache again in case processed while in queue
-      if (this.cache.has(task.imageUrl)) {
-        task.resolve(this.cache.get(task.imageUrl)!);
-      } else {
-        const worker = await this.getWorker();
-        const { data } = await worker.recognize(task.imageUrl);
-        const extracted = data.text || '';
-        this.cache.set(task.imageUrl, extracted);
-        task.resolve(extracted);
-      }
-    } catch (err) {
-      console.warn('[Focus Filter AI] OCR recognition failed for:', task.imageUrl, err);
-      // Cache empty string on failure to prevent infinite retry loops
-      this.cache.set(task.imageUrl, '');
-      task.resolve('');
+      const result = await requestPromise;
+      this.cache.set(imageUrl, result);
+      return result;
     } finally {
-      this.isProcessingQueue = false;
-      // Continue processing next item after small delay to yield main thread
-      setTimeout(() => this.processNextInQueue(), 50);
+      this.inFlight.delete(imageUrl);
     }
+  }
+
+  private requestAnalysis(imageUrl: string): Promise<string> {
+    return new Promise<string>((resolve) => {
+      // Guard against non-extension environments (e.g. unit tests)
+      if (
+        typeof chrome === 'undefined' ||
+        !chrome.runtime ||
+        !chrome.runtime.sendMessage
+      ) {
+        resolve('');
+        return;
+      }
+
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'ANALYZE_THUMBNAIL',
+            payload: { imageUrl },
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              // Service worker inactive or message port closed — non-critical
+              resolve('');
+              return;
+            }
+
+            if (response && typeof response.text === 'string') {
+              resolve(response.text);
+            } else {
+              resolve('');
+            }
+          }
+        );
+      } catch {
+        resolve('');
+      }
+    });
   }
 
   public clearCache(): void {
     this.cache.clear();
+    this.inFlight.clear();
   }
 }
 

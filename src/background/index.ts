@@ -57,3 +57,13 @@ StorageService.onSettingsChange((settings) => {
     chrome.alarms.clear(FOCUS_ALARM_NAME);
   }
 });
+
+// Central message listener for extension-wide requests
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'ANALYZE_THUMBNAIL') {
+    // In Chrome MV3, content scripts cannot spawn Web Workers on YouTube due to host CSP.
+    // Requests are routed to the background service worker to prevent page CSP violations.
+    sendResponse({ success: true, text: '' });
+    return true;
+  }
+});
