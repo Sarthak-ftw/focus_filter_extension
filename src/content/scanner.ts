@@ -32,7 +32,7 @@ export class YouTubeScanner {
 
   /**
    * Injects an !important CSS stylesheet directly into the page.
-   * This guarantees that YouTube's native styles cannot override our hiding/blurring rules.
+   * Guarantees YouTube's native styles cannot override hiding/blurring rules.
    */
   private ensureInjectedStyles(): void {
     if (document.getElementById(STYLESHEET_ID)) return;
@@ -44,7 +44,7 @@ export class YouTubeScanner {
         display: none !important;
       }
 
-      /* Blur card contents while keeping the reveal overlay crisp & clickable */
+      /* Blur card contents while keeping reveal overlay sharp & clickable */
       [${BLURRED_ATTR}="true"] > *:not(.${OVERLAY_CLASS}) {
         filter: blur(14px) grayscale(90%) !important;
         opacity: 0.3 !important;
@@ -162,7 +162,28 @@ export class YouTubeScanner {
       card.tagName.toLowerCase().includes('shorts') ||
       !!card.querySelector('a[href*="/shorts/"]');
 
-    const evalResult = this.engine.evaluate(title, channel, isShort);
+    let evalResult = this.engine.evaluate(title, channel, isShort);
+
+    // Defense-in-depth: If title and channel didn't directly match,
+    // inspect the card's metadata container (covers watch page sidebar lockups)
+    if (!evalResult.shouldHide) {
+      const metaContainer = card.querySelector<HTMLElement>(
+        'yt-content-metadata-view-model, .yt-content-metadata-view-model__metadata-row, #metadata, #metadata-line, #byline-container'
+      );
+      if (metaContainer) {
+        const metaText = (metaContainer.textContent || metaContainer.innerText || '').trim();
+        if (metaText) {
+          const metaEval = this.engine.evaluate('', metaText, false);
+          if (metaEval.shouldHide) {
+            evalResult = {
+              shouldHide: true,
+              matchedKeyword: metaEval.matchedKeyword,
+              matchedType: 'channel',
+            };
+          }
+        }
+      }
+    }
 
     // Mark as processed
     card.setAttribute(PROCESSED_ATTR, 'true');
@@ -249,7 +270,6 @@ export class YouTubeScanner {
     button.onclick = (e) => {
       e.stopPropagation();
       e.preventDefault();
-      // Mark as intentionally revealed for this session
       card.setAttribute(REVEALED_ATTR, 'true');
       card.removeAttribute(BLURRED_ATTR);
       overlay.remove();
@@ -346,7 +366,7 @@ export class YouTubeScanner {
       if (text) return text;
     }
 
-    // 3. Modern attributed string containers (widely used across 2024-2026 YouTube search)
+    // 3. Modern attributed string containers (widely used across 2024-2026 YouTube search & sidebar)
     const attributedStr = card.querySelector<HTMLElement>('yt-core-attributed-string');
     if (attributedStr) {
       const text = (
@@ -389,9 +409,10 @@ export class YouTubeScanner {
   }
 
   /**
-   * Extracts channel name across search results, watch next, and homepage cards.
+   * Extracts channel name across Home feed, Search results, and Watch Page sidebar.
    */
   private extractChannel(card: HTMLElement): string {
+    // 1. Check direct channel selectors from dictionary
     const channelEl = card.querySelector<HTMLElement>(YOUTUBE_SELECTORS.channels);
     if (channelEl) {
       const text = (
@@ -403,8 +424,9 @@ export class YouTubeScanner {
       if (text) return text;
     }
 
+    // 2. Channel links (/@channel or /channel/id)
     const channelLink = card.querySelector<HTMLAnchorElement>(
-      'a[href^="/@"], a[href*="/channel/"]'
+      'a[href^="/@"], a[href*="/channel/"], a[href*="/user/"]'
     );
     if (channelLink) {
       const text = (
@@ -413,6 +435,22 @@ export class YouTubeScanner {
         channelLink.getAttribute('title') ||
         ''
       ).trim();
+      if (text) return text;
+    }
+
+    // 3. Modern view-model first metadata row (typically holds channel name in sidebar lockups)
+    const metaRow = card.querySelector<HTMLElement>(
+      '.yt-content-metadata-view-model__metadata-row, .ytContentMetadataViewModelMetadataRow'
+    );
+    if (metaRow) {
+      const text = (metaRow.textContent || metaRow.innerText || '').trim();
+      if (text) return text;
+    }
+
+    // 4. Byline containers
+    const byline = card.querySelector<HTMLElement>('#byline, #byline-text, #channel-name, .ytd-channel-name');
+    if (byline) {
+      const text = (byline.textContent || byline.innerText || '').trim();
       if (text) return text;
     }
 

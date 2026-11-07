@@ -1,18 +1,19 @@
 /**
  * Centralized YouTube DOM Selectors Dictionary.
- * Covers Home feed, Search results, Shorts shelves, Channel pages, and Suggested videos.
+ * Covers Home feed, Search results, Shorts shelves, Watch page (sidebar / suggestions),
+ * Channel pages, and Subscriptions.
  * Supports both classic Polymer elements and modern (2024-2026) Wiz/Lit view models.
  */
 
 export const YOUTUBE_SELECTORS = {
-  // Video Cards across all YouTube views (Home, Search, Shorts Shelves, Watch Next, Subscriptions)
+  // Video Cards across all YouTube views (Home, Search, Watch Sidebar, Shorts Shelves)
   cards: [
     'ytd-rich-item-renderer',              // Homepage & Subscriptions grid cards
     'ytd-video-renderer',                  // Search results standard video cards
     'ytd-compact-video-renderer',          // Watch page "Up Next" / Suggested sidebar cards
     'ytd-reel-item-renderer',              // Individual Shorts cards (classic)
     'ytd-grid-video-renderer',             // Channel videos tab grid cards
-    'yt-lockup-view-model',                 // Modern universal lockup component (Home & Search)
+    'yt-lockup-view-model',                 // Modern universal lockup component (Home, Search, Watch)
     'ytm-shorts-lockup-view-model',         // Modern Shorts card (shelf & search results)
     'ytm-shorts-lockup-view-model-v2',      // Modern Shorts card v2
     'ytd-shorts-lockup-view-model',         // Desktop Shorts lockup
@@ -45,7 +46,7 @@ export const YOUTUBE_SELECTORS = {
     'a[href*="/watch"]',
   ].join(','),
 
-  // Channel name elements inside a video card
+  // Channel name elements inside a video card (Home, Search, Watch Next sidebar)
   channels: [
     'ytd-channel-name #text',
     '#channel-name #text',
@@ -53,9 +54,18 @@ export const YOUTUBE_SELECTORS = {
     'yt-formatted-string.ytd-channel-name',
     'ytd-channel-name',
     '#channel-name',
+    '#byline',
+    '#byline-text',
+    '#byline-container',
+    '.yt-content-metadata-view-model__metadata-row:first-child',
+    '.yt-content-metadata-view-model__metadata-text',
+    '.ytContentMetadataViewModelMetadataRow',
+    '.ytContentMetadataViewModelMetadataText',
+    'yt-content-metadata-view-model',
     '.yt-lockup-metadata-view-model-wiz__metadata',
     '.yt-lockup-metadata-view-model__metadata',
     'a[href^="/@"]',
     'a[href*="/channel/"]',
+    'a[href*="/user/"]',
   ].join(','),
 };
